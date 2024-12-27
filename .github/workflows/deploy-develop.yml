@@ -54,8 +54,8 @@ jobs:
     #     key: ${{ secrets.XSERVER_SSH_PRIVATE_KEY }}
     #     port: ${{ secrets.XSERVER_SSH_PORT }}
     #     script: |
-    #       sudo rm -rf /etc/nginx/sites-enabled/nagiyu
-    #       sudo rm -rf /etc/nginx/sites-available/nagiyu
+    #       sudo rm -rf /etc/nginx/sites-enabled/dev-nagiyu
+    #       sudo rm -rf /etc/nginx/sites-available/dev-nagiyu
     #       sudo rm -rf ${{ secrets.DEVELOP_TARGET_PATH }}/nginx
 
     # - name: Upload Nginx Settings to server
@@ -76,8 +76,8 @@ jobs:
     #     key: ${{ secrets.XSERVER_SSH_PRIVATE_KEY }}
     #     port: ${{ secrets.XSERVER_SSH_PORT }}
     #     script: |
-    #       sudo cp ${{ secrets.DEVELOP_TARGET_PATH }}/nginx/nagiyu /etc/nginx/sites-available/
-    #       sudo ln -s /etc/nginx/sites-available/nagiyu /etc/nginx/sites-enabled/
+    #       sudo cp ${{ secrets.DEVELOP_TARGET_PATH }}/nginx/dev-nagiyu /etc/nginx/sites-available/
+    #       sudo ln -s /etc/nginx/sites-available/dev-nagiyu /etc/nginx/sites-enabled/
     #       sudo systemctl restart nginx
 
     # - name: Remove all files in target path
