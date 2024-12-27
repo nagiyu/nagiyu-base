@@ -33,12 +33,12 @@ jobs:
       run: dotnet publish --configuration Release home/web/Nagiyu.Web.csproj
 
     - name: Copy files
-      run: cp -r home/web/bin/Release/net8.0/publish containers/nagiyu/bin
+      run: cp -r home/web/bin/Release/net8.0/publish bin
 
     # - name: Add Certificates
     #   run: |
-    #     echo '${{ secrets.PRODUCTION_FULLCHAIN }}' > containers/nagiyu/fullchain.pem
-    #     echo '${{ secrets.PRODUCTION_PRIVATE_KEY }}' > containers/nagiyu/privkey.pem
+    #     echo '${{ secrets.PRODUCTION_FULLCHAIN }}' > bin/fullchain.pem
+    #     echo '${{ secrets.PRODUCTION_PRIVATE_KEY }}' > bin/privkey.pem
 
     # - name: Update appsettings.json
     #   run: echo '${{ secrets.PRODUCTION_APPSETTINGS }}' > bin/appsettings.json
@@ -95,13 +95,47 @@ jobs:
     #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     #     aws-region: ${{ secrets.AWS_REGION }}
 
+    # - name: Launch temporary EC2 instance
+    #   id: launch_temp_instance
+    #   run: |
+    #     INSTANCE_ID=$(aws ec2 run-instances \
+    #       --launch-template LaunchTemplateId=${{ secrets.AWS_LAUNCH_TEMPLATE_ID }},Version=$Latest \
+    #       --network-interfaces '[{"SubnetId":"${{ secrets.AWS_SUBNET_ID }}","DeviceIndex":0,"Groups":["${{ secrets.AWS_SECURITY_GROUP_ID }}"]}]' \
+    #       --query 'Instances[0].InstanceId' \
+    #       --output text)
+    #     echo "TEMP_INSTANCE_ID=${INSTANCE_ID}" >> $GITHUB_ENV
+
+    # - name: Wait for temporary instance to become available
+    #   run: |
+    #     while true; do
+    #       STATE=$(aws ec2 describe-instances \
+    #         --instance-ids ${{ env.TEMP_INSTANCE_ID }} \
+    #         --query 'Reservations[0].Instances[0].State.Name' \
+    #         --output text)
+    #       echo "Current instance state: $STATE"
+    #       if [ "$STATE" == "running" ]; then
+    #         echo "Instance is now running!"
+    #         break
+    #       fi
+    #       echo "Waiting for instance to become running..."
+    #       sleep 15
+    #     done
+
+    # - name: Get temporary instance IP
+    #   run: |
+    #     INSTANCE_IP=$(aws ec2 describe-instances \
+    #       --instance-ids ${{ env.TEMP_INSTANCE_ID }} \
+    #       --query "Reservations[0].Instances[0].PublicIpAddress" \
+    #       --output text)
+    #     echo "TEMP_INSTANCE_IP=${INSTANCE_IP}" >> $GITHUB_ENV
+
     # - name: Open SecurityGroup
     #   run: aws ec2 authorize-security-group-ingress --group-id ${{ secrets.EC2_SECURITY_GROUP_ID }} --protocol tcp --port 22 --cidr ${{ steps.ip.outputs.ipv4 }}/32
 
     # - name: Remove all files in target path
     #   uses: appleboy/ssh-action@master
     #   with:
-    #     host: ${{ secrets.AWS_SSH_HOST }}
+    #     host: ${{ env.TEMP_INSTANCE_IP }}
     #     username: ${{ secrets.AWS_SSH_USERNAME }}
     #     key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
     #     port: ${{ secrets.AWS_SSH_PORT }}
@@ -113,7 +147,7 @@ jobs:
     # - name: Upload artifact to server
     #   uses: appleboy/scp-action@master
     #   with:
-    #     host: ${{ secrets.AWS_SSH_HOST }}
+    #     host: ${{ env.TEMP_INSTANCE_IP }}
     #     username: ${{ secrets.AWS_SSH_USERNAME }}
     #     key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
     #     port: ${{ secrets.AWS_SSH_PORT }}
@@ -123,13 +157,75 @@ jobs:
     # - name: Recreate Nagiyu
     #   uses: appleboy/ssh-action@master
     #   with:
-    #     host: ${{ secrets.AWS_SSH_HOST }}
+    #     host: ${{ env.TEMP_INSTANCE_IP }}
     #     username: ${{ secrets.AWS_SSH_USERNAME }}
     #     key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
     #     port: ${{ secrets.AWS_SSH_PORT }}
     #     script: |
     #       cd /home/ec2-user/nagiyu/bin
-    #       nohup dotnet Nagiyu.Web.dll --urls "http://0.0.0.0:5000" > /home/ec2-user/output.log 2>&1 &
+    #       nohup dotnet Nagiyu.Web.dll --urls "https://0.0.0.0:5000" > /home/ec2-user/output.log 2>&1 &
 
     # - name: Close SecurityGroup
     #   run: aws ec2 revoke-security-group-ingress --group-id ${{ secrets.EC2_SECURITY_GROUP_ID }} --protocol tcp --port 22 --cidr ${{ steps.ip.outputs.ipv4 }}/32
+
+    # - name: Create AMI from temporary instance
+    #   id: create_temp_ami
+    #   run: |
+    #     AMI_ID=$(aws ec2 create-image \
+    #       --instance-id ${{ env.TEMP_INSTANCE_ID }} \
+    #       --name "Nagiyu-$(date +%Y%m%d%H%M%S)" \
+    #       --query 'ImageId' \
+    #       --output text)
+    #     echo "AMI_ID=${AMI_ID}" >> $GITHUB_ENV
+
+    # - name: Wait for AMI to become available
+    #   run: |
+    #     while true; do
+    #       STATE=$(aws ec2 describe-images \
+    #         --image-ids ${{ env.AMI_ID }} \
+    #         --query 'Images[0].State' \
+    #         --output text)
+    #       echo "Current AMI state: $STATE"
+    #       if [ "$STATE" == "available" ]; then
+    #         echo "AMI is now available!"
+    #         break
+    #       fi
+    #       echo "Waiting for AMI to become available..."
+    #       sleep 15
+    #     done
+
+    # - name: Terminate temporary instance
+    #   run: aws ec2 terminate-instances --instance-ids ${{ env.TEMP_INSTANCE_ID }}
+
+    # - name: Get latest launch template version
+    #   id: get_latest_version
+    #   run: |
+    #     LATEST_VERSION=$(aws ec2 describe-launch-template-versions \
+    #       --launch-template-id ${{ secrets.AWS_LAUNCH_TEMPLATE_ID }} \
+    #       --query 'sort_by(LaunchTemplateVersions, &VersionNumber)[-1].VersionNumber' \
+    #       --output text)
+    #     echo "LATEST_VERSION=${LATEST_VERSION}" >> $GITHUB_ENV
+
+    # - name: Update Launch Template
+    #   id: update_template
+    #   run: |
+    #     USER_DATA=$(echo -n '#!/bin/bash
+    #     cd /home/ec2-user/nagiyu/bin
+    #     nohup dotnet Nagiyu.Web.dll --urls "https://0.0.0.0:5000" > /home/ec2-user/output.log 2>&1 &' | base64 | tr -d '\n')
+
+    #     NEW_VERSION=$(aws ec2 create-launch-template-version \
+    #       --launch-template-id ${{ secrets.AWS_LAUNCH_TEMPLATE_ID }} \
+    #       --version-description "Updated for new build" \
+    #       --source-version ${{ env.LATEST_VERSION }} \
+    #       --launch-template-data '{"ImageId":"'"${{ env.AMI_ID }}"'","UserData":"'"$USER_DATA"'"}' \
+    #       --query 'LaunchTemplateVersion.VersionNumber' \
+    #       --output text)
+    #     echo "NEW_VERSION=${NEW_VERSION}" >> $GITHUB_ENV
+
+    # - name: Trigger Rolling Update
+    #   run: |
+    #     aws autoscaling update-auto-scaling-group \
+    #       --auto-scaling-group-name "${{ secrets.AWS_ASG_NAME }}" \
+    #       --launch-template "LaunchTemplateName=${{ secrets.AWS_LAUNCH_TEMPLATE_NAME }},Version=${{ env.NEW_VERSION }}"
+    #     aws autoscaling start-instance-refresh \
+    #       --auto-scaling-group-name "${{ secrets.AWS_ASG_NAME }}"
